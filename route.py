@@ -1,110 +1,113 @@
+import random
+from sqlalchemy import create_engine, text
+from urllib.parse import quote_plus
 import networkx as nx
 import matplotlib.pyplot as plt
 import pandas as pd
-import requests
-from math import radians, sin, cos, sqrt, atan2
-import mysql.connector
 from geopy.distance import geodesic
+import numpy as np
+from adjustText import adjust_text
+import nutri as n
+
+# Database configuration
 db_config = {
     'host': 'localhost',
     'user': 'root',
-    'password': '@MYsql23!',
-    'database': 'Food',
+    'password': quote_plus('Aditya@06'),  # URL encode the password
+    'database': 'food'
 }
-connection = mysql.connector.connect(
-    host=db_config['host'],
-    user=db_config['user'],
-    password=db_config['password'],
-    database=db_config['database']
-)
 
-def get_coordinates(city_name):
-    url = f"https://nominatim.openstreetmap.org/search?q={city_name}&format=json&limit=1"
-    try:
-        response = requests.get(url, verify=False)
-        data = response.json()
-        if data:
-            latitude, longitude = float(data[0]['lat']), float(data[0]['lon'])
-            return latitude, longitude
-        else:
-            print(f"Unable to get coordinates for {city_name}")
-            return None
-    except Exception as e:
-        print(f"Error: {e}")
-        return None
+# Create database connection string
+db_url = f"mysql+pymysql://{db_config['user']}:{db_config['password']}@{db_config['host']}/{db_config['database']}"
+engine = create_engine(db_url)
 
-def haversine_distance(coord1, coord2):
-    # Haversine formula to calculate distance between two coordinates
-    R = 6378.14  # Earth radius in kilometers
+def calculate_distance(ngo_coords, donor_coords):
+    """
+    Calculate the geodesic distance between NGO and donor coordinates.
+    If coordinates are identical or too close, set a default distance of 1 km.
+    """
+    if abs(ngo_coords[0] - donor_coords[0]) < 0.0001 and abs(ngo_coords[1] - donor_coords[1]) < 0.0001:
+        print("Warning: NGO and donor have identical or very close coordinates. Setting distance to 1 km.")
+        return 1.0
 
-    lat1, lon1 = radians(coord1[0]), radians(coord1[1])
-    lat2, lon2 = radians(coord2[0]), radians(coord2[1])
-
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-
-    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
-    c = 2 * atan2(sqrt(a), sqrt(1 - a))
-
-    distance = R * c  # Distance in kilometers
+    distance = geodesic(ngo_coords, donor_coords).km
+    print(f"Calculating distance between {ngo_coords} and {donor_coords}: {distance:.2f} km")
     return distance
+
 def route_op():
-    ngo_name = input("Enter your NGO name: ")
-    ngo_state = input("Enter your State: ")
-    ngo = input("Enter your City: ")
-    donor = pd.read_sql(f"Select * from Donor where State='{ngo_state}'", con=connection)
-    loc1 = donor[['NameOfRestaurant', 'City']]
+    try:
+        # Get NGO input
+        ngo_name = input("Enter your NGO name: ")
+        state = input("Enter your State: ").lower()
 
-    # Input the names of the cities
-    # Get the coordinates using the requests library
-    coordinates1 = get_coordinates(ngo)
-    G = nx.Graph()
+        # Query NGO data
+        with engine.connect() as conn:
+            ngo_query = text("SELECT latitude, longitude FROM ngos WHERE name = :name AND state = :state")
+            ngo_result = conn.execute(ngo_query, {"name": ngo_name, "state": state}).fetchone()
+            
+            if not ngo_result:
+                print(f"No NGO found with name {ngo_name} in {state}")
+                return
 
-    for _, i in loc1.iterrows():  # Using iterrows to iterate over rows
-        coordinates2 = get_coordinates(["City"])
-        if coordinates1 and coordinates2:
-            # Calculate and print the distance between the two locations
-            distance = geodesic(coordinates1, coordinates2).km
-            print(f"The distance between {i['NameOfRestaurant']} and {ngo_name} is approximately {distance:.2f} kilometers.")
+            # Query donor data
+            donor_query = text("SELECT name, latitude, longitude, quantity FROM donors WHERE state = :state")
+            donors = pd.read_sql(donor_query, conn, params={"state": state})
 
-            # Build a graph with weighted edges based on the calculated distance
-            G.add_nodes_from([i['NameOfRestaurant'], ngo_name])
-            G.add_edge(i['NameOfRestaurant'], ngo_name, weight=distance)
+            if donors.empty:
+                print(f"No donors found in {state}")
+                return
 
-            for _, j in loc1.iterrows():
-                if i['NameOfRestaurant'] != j['NameOfRestaurant']:
-                    coordinates3 = get_coordinates(j['City'])
-                    distance = geodesic(coordinates2, coordinates3).km
-                    print(f"The distance between {j['NameOfRestaurant']} and {i['NameOfRestaurant']} is approximately {distance:.2f} kilometers.")
+        # Create graph
+        G = nx.Graph()
+        ngo_coords = (float(ngo_result[0]), float(ngo_result[1]))
+        
+        # Add NGO node
+        G.add_node('NGO', pos=ngo_coords)
+        
+        # Add donor nodes and calculate distances
+        pos = {'NGO': ngo_coords}
+        distances = {}
+        
+        for idx, donor in donors.iterrows():
+            donor_coords = (float(donor['latitude']), float(donor['longitude']))
+            donor_name = f"Donor{idx+1}"
+            G.add_node(donor_name, pos=donor_coords)
+            pos[donor_name] = donor_coords
+            
+            # Calculate distance
+            distance = calculate_distance(ngo_coords, donor_coords)
+            G.add_edge('NGO', donor_name, weight=distance)
+            distances[donor_name] = distance
 
-                    # Build a graph with weighted edges based on the calculated distance
-                    G.add_nodes_from([j['NameOfRestaurant'], i['NameOfRestaurant']])
-                    G.add_edge(i['NameOfRestaurant'], j['NameOfRestaurant'], weight=distance)
+        # Find shortest paths
+        shortest_paths = nx.single_source_shortest_path(G, 'NGO')
+        
+        # Plotting
+        plt.figure(figsize=(12, 8))
+        nx.draw(G, pos, with_labels=True, node_color='lightblue', 
+                node_size=500, font_size=8, font_weight='bold')
+        
+        # Add edge labels
+        edge_labels = nx.get_edge_attributes(G, 'weight')
+        nx.draw_networkx_edge_labels(G, pos, edge_labels)
+        
+        plt.title(f"Route Optimization for {ngo_name}")
+        plt.axis('off')
+        plt.show()
 
-    # Visualize the graph
-    pos = nx.spring_layout(G)
-    nx.draw(G, pos, with_labels=True, font_weight='bold', node_size=700, node_color='skyblue', font_size=8, font_color='black')
-    labels = nx.get_edge_attributes(G, 'weight')
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=labels)
-    plt.show()
+        # Print routes and distances
+        print("\nOptimal Routes:")
+        for node in G.nodes():
+            if node != 'NGO':
+                path = shortest_paths[node]
+                distance = distances[node]
+                print(f"NGO -> {node}: Distance = {distance:.2f} km")
 
-    mst = nx.minimum_spanning_tree(G)
+    except Exception as e:
+        print(f"Error: {str(e)}")
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
-    # Visualize the optimized routes
-    pos_mst = nx.spring_layout(mst)
-    nx.draw(mst, pos_mst, with_labels=True, font_weight='bold', node_size=700, node_color='skyblue', font_size=8,
-            font_color='black')
-    labels_mst = nx.get_edge_attributes(mst, 'weight')
-    nx.draw_networkx_edge_labels(mst, pos_mst, edge_labels=labels_mst)
-    plt.show()
-    print(mst)
-
-    shortest_paths = nx.shortest_path(mst, source=ngo_name)
-
-    # Print the optimized routes
-    print("Optimized Routes:")
-    for target, path in shortest_paths.items():
-        if target != ngo_name:
-            print(f"From {ngo_name} to {target}: {' -> '.join(path)}")
-
-
+if __name__ == "__main__":
+    route_op()

@@ -1,88 +1,103 @@
+from sqlalchemy import create_engine
 import pandas as pd
-import mysql.connector
 import numpy as np
-from sklearn.model_selection import train_test_split,cross_val_score, KFold
+from sklearn.model_selection import train_test_split, cross_val_score, KFold
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
+import pymysql
+import warnings
+warnings.filterwarnings('ignore')
 
-db_config = {
-    'host': 'localhost',
-    'user': 'root',
-    'password': '@MYsql23!',
-    'database': 'Food',
-}
-connection = mysql.connector.connect(
-    host=db_config['host'],
-    user=db_config['user'],
-    password=db_config['password'],
-    database=db_config['database']
-)
+try:
+    
+    db_config = {
+        'host': 'localhost',
+        'user': 'root',
+        'password': 'Mypa55word',
+        'database': 'food',
+    }
+    connection_str = f"mysql+pymysql://{db_config['user']}:{db_config['password']}@{db_config['host']}/{db_config['database']}?ssl=false"
+    engine = create_engine(connection_str)
+    
+    
+    with engine.connect() as conn:
+        query = 'SELECT * FROM Surplus'
+        data = pd.read_sql(query, con=conn)
+    print("Successfully connected to database")
 
-if connection.is_connected():
-    print("Connected to MySQL database")
+except Exception as e:
+    print(f"Database connection failed: {e}")
+    print("Using sample data instead...")
+    
+    
+    data = pd.DataFrame({
+        'waste_in_grams': np.random.randint(100, 1000, 100),
+        'quantity_in_grams': np.random.randint(500, 2000, 100),
+        'ingredient_count': np.random.randint(2, 10, 100),
+        'food_type': np.random.choice(['Indian', 'Chinese', 'Italian', 'Mexican'], 100)
+    })
 
-query = 'SELECT * FROM Surplus'  # Modify the SQL query according to your table structure
-data = pd.read_sql(query, con=connection)
 
-# Define a threshold to classify 'waste_in_grams' as High or Low
-val=pd.Series(data['waste_in_grams']).median()
-threshold = np.percentile(data['waste_in_grams'],val)
+print("Fetching data from the Surplus table...")
+print(data.head())  
+print(data.shape)   
+
+
+if data.empty:
+    print("Error: The Surplus table is empty. Please populate it with data and try again.")
+    exit()
+
+
+threshold = np.percentile(data['waste_in_grams'], 50)
+
 
 data['waste_category'] = np.where(data['waste_in_grams'] > threshold, 'High', 'Low')
-# Select and encode the relevant features
-selected_features = ['quantity_in_grams', 'ingredient_count','food_type']
-X = data[selected_features]
-X = pd.get_dummies(X, columns=['food_type'])  # Encode the 'food_type' feature
 
+
+selected_features = ['quantity_in_grams', 'ingredient_count', 'food_type']
+X = data[selected_features]
+X = pd.get_dummies(X, columns=['food_type'])  
 y = data['waste_category']
+
+
 X_train, X_valid, y_train, y_valid = train_test_split(X, y, random_state=42)
 
-# Train a classifier (e.g., Random Forest) using the selected features
-clf = RandomForestClassifier(max_depth=3, min_samples_split=2, min_samples_leaf=1, n_estimators=60,random_state=46)
-kf = KFold(n_splits=5, shuffle=True, random_state=42)  # You can adjust the number of folds (n_splits)
+
+clf = RandomForestClassifier(max_depth=3, min_samples_split=2, min_samples_leaf=1, n_estimators=60, random_state=46)
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+
 cross_val_scores = cross_val_score(clf, X, y, cv=kf)
 
-# Print the cross-validated scores
+
+clf.fit(X_train, y_train)
 
 
-
-# Fit the model on the entire dataset
-clf.fit(X, y)
-
-
-# Evaluate the model on the validation set
 y_pred = clf.predict(X_valid)
 accuracy = accuracy_score(y_valid, y_pred)
-# print(f"Model Accuracy: {accuracy:.2f}")
 report = classification_report(y_valid, y_pred, target_names=['Low', 'High'])
-# print("Classification Report:")
-# print(report)
+
+
+print("Model training complete.")
+print(f"Cross-Validated Scores: {cross_val_scores}")
+print(f"Model Accuracy: {accuracy:.2f}")
+print("Classification Report:")
+print(report)
+
+
 def check_overfitting(clf, X, y, X_valid, y_valid, cv):
-    # Calculate cross-validated scores
     cross_val_scores = cross_val_score(clf, X, y, cv=cv)
-
-    # Fit the model on the entire dataset
     clf.fit(X, y)
-
-    # Evaluate the model on the validation set
     y_pred = clf.predict(X_valid)
     accuracy = accuracy_score(y_valid, y_pred)
-
-    # Calculate the mean and standard deviation of cross-validated scores
     mean_cv_score = cross_val_scores.mean()
     std_cv_score = cross_val_scores.std()
 
-    # Compare cross-validated scores to the validation set accuracy
     print(f"Mean Cross-Validated Score: {mean_cv_score:.2f}")
     print(f"Standard Deviation of Cross-Validated Scores: {std_cv_score:.2f}")
     print(f"Validation Set Accuracy: {accuracy:.2f}")
 
-    # Check if overfitting might be occurring
     if mean_cv_score > accuracy:
         print("Warning: The model may be overfitting to the training data.")
     else:
         print("The model does not appear to be overfitting.")
-
-
-
-
