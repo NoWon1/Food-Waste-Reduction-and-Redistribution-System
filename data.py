@@ -1,3 +1,5 @@
+#uselsess imo
+
 import mysql.connector
 
 db_config = {
