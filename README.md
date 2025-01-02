@@ -18,11 +18,11 @@ Integration with USDA API for nutritional information
 Live tracking of food availability and redistribution status
 
 ## Tech Stack
-### Python 3.11
-### MySQL Database
-### SQLAlchemy ORM
-### Machine Learning Libraries
-### USDA Food Data API
+1. Python 3.11
+2. MySQL Database
+3. SQLAlchemy ORM
+4. Machine Learning Libraries
+5. USDA Food Data API
 
 
 ## Setup
