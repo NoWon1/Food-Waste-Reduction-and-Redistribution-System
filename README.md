@@ -33,7 +33,6 @@ Live tracking of food availability and redistribution status
 pip install -r requirements.txt
 ```
 ### 3. Configure database settings in main.py:
-## Usage
 
 ```python
 DB_CONFIG = {
