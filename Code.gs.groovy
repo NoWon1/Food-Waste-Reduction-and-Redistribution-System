@@ -2,8 +2,9 @@ function sendToAPI() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Receiver");
   const data = sheet.getDataRange().getValues();
 
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
+  const chunkSize = 100; // Adjust based on API limits
+  for (let i = 1; i < data.length; i += chunkSize) {
+    const chunk = data.slice(i, i + chunkSize);
 
     const payload = {
       Email_ID: row[0],
